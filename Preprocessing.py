@@ -15,25 +15,36 @@ from glob import glob
 
 warnings.filterwarnings("ignore")
 
-class GlorysPreprocessor:
-    def __init__(self, glorys_path, target_path,single_depth=False,verbose=False):
-        self.ds = xr.open_dataset(glorys_path, chunks={"time": 1})
-        if "longitude" in self.ds:
-            self.ds = self.ds.rename({"longitude": "lon", "latitude": "lat", "depth":"zt"})
+class Preprocessor:
+    def __init__(self, src_path, target_path,single_depth=False,verbose=False,ncores=16,filtering=True,weight_path='/Odyssey/private/e25cheve/data/Weights',weight_name='glorys12'):
+        self.filtering = filtering
+        self.weight_name = weight_name
+        self.weight_path = weight_path
+        self.ds = xr.open_dataset(src_path, chunks={"time": 1})
+        rename_dict = {}
+        if "longitude" in self.ds.coords:
+            rename_dict["longitude"] = "lon"
+        if "latitude" in self.ds.coords:
+            rename_dict["latitude"] = "lat"
+        if "depth" in self.ds.coords:
+            rename_dict["depth"] = "zt"
+        if rename_dict:
+            self.ds = self.ds.rename(rename_dict)
         if self.ds.lon.min() < 0:
             if verbose: print("Adjusting longitude to 0–360…")
             self.ds = self.ds.assign_coords(lon=(self.ds.lon % 360))
             self.ds = self.ds.sortby("lon")
-
-        if self.ds.zt.max() > 0:
-            if verbose: print("Adjusting depth to negative values")
-            self.ds = self.ds.assign_coords(zt=(-self.ds.zt))
-            self.ds = self.ds.sortby("zt")
-        nlat = self.ds.dims["lat"]
-        nlon = self.ds.dims["lon"]
-        self.ds = self.ds.isel(
-            lat=slice(0, -100),
-        )
+        if "zt" in self.ds.coords:
+            if self.ds.zt.max() > 0:
+                if verbose: print("Adjusting depth to negative values")
+                self.ds = self.ds.assign_coords(zt=(-self.ds.zt))
+                self.ds = self.ds.sortby("zt")
+            nlat = self.ds.dims["lat"]
+            nlon = self.ds.dims["lon"]
+        if self.ds.dims["lat"] > 2000:
+            self.ds = self.ds.isel(
+                lat=slice(0, -100),
+            )
 
         target_grid = xr.open_dataset(target_path, chunks={"time": 1})
         if "xt" in target_grid:
@@ -45,9 +56,27 @@ class GlorysPreprocessor:
         if "yu" in target_grid:
             if verbose: print("adjusting yu to lat")
             self.target_grid_v = target_grid.rename({"xt": "lon", "yu": "lat"})
-        if single_depth:
-            self.ds = self.ds.squeeze("zt",drop=True)
+        if "zt" in self.ds.coords:
+            if single_depth:
+                self.ds = self.ds.squeeze("zt",drop=True)
         self.z_target = self.target_grid.zt
+
+        dims = self.ds.dims
+        self.chunker = {"lon": -1, "lat": -1}
+        nt = dims.get("time", None)
+        nz = dims.get("zt", None)
+        if nt is not None and nt > 1:
+            if nt >= ncores:
+                self.chunker["time"] = int(np.ceil(nt / ncores))
+        
+            else:
+                self.chunker["time"] = 1
+        
+                if nz is not None and nz > 1:
+                    depth_chunks = max(1, ncores // nt)
+                    self.chunker["zt"] = int(np.ceil(nz / depth_chunks))
+        elif nz is not None and nz > 1:
+            self.chunker["zt"] = int(np.ceil(nz / ncores))
 
     def run(self, var):
         out = []
@@ -60,18 +89,21 @@ class GlorysPreprocessor:
             self.ds.lon.values,
             mask=mask_ocean
         )
-        da_filtered = []
-        for k in range(len(self.z_target)):
-            hf = HorizontalFilter(grid,k,self.ds.time)
-            da_interp_go = da.isel(zt=k)
-            var_i, var_filtered = hf.apply_filter(da_interp_go)
-            #if k==len(self.z_target)-1:
-            #    print("plot")
-            #    hf.plot_filtered_field(var_i,var_filtered,var)
-            da_filtered.append(var_filtered)
-        filtered = xr.concat(da_filtered, dim="zt")
-        filtered = filtered.assign_coords(zt=self.z_target)
-        regrid = HorizontalRegridder(filtered, self.target_grid)
+        if self.filtering:
+            da_filtered = []
+            for k in range(len(self.z_target)):
+                hf = HorizontalFilter(grid,k,self.ds.time)
+                da_interp_go = da.isel(zt=k)
+                var_i, var_filtered = hf.apply_filter(da_interp_go)
+                #if k==len(self.z_target)-1:
+                #    print("plot")
+                #    hf.plot_filtered_field(var_i,var_filtered,var)
+                da_filtered.append(var_filtered)
+            filtered = xr.concat(da_filtered, dim="zt")
+            filtered = filtered.assign_coords(zt=self.z_target)
+        else:
+            filtered = da
+        regrid = HorizontalRegridder(filtered, self.target_grid,weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
         final_var = regrid(filtered)
         final_var = final_var.fillna(0)
         out.append(final_var.to_dataset(name=var))
@@ -86,9 +118,12 @@ class GlorysPreprocessor:
             self.ds.lon.values,
             mask=mask_ocean
         )
-        hf = HorizontalFilter(grid,-1,self.ds.time)
-        var_i, var_filtered = hf.apply_filter(da)
-        regrid = HorizontalRegridder(var_filtered, self.target_grid)
+        if self.filtering:
+            hf = HorizontalFilter(grid,-1,self.ds.time)
+            var_i, var_filtered = hf.apply_filter(da)
+        else:
+            var_filtered = da
+        regrid = HorizontalRegridder(var_filtered, self.target_grid,weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
         final_var = regrid(var_filtered)
         final_var = final_var.fillna(0)
         out.append(final_var.to_dataset(name=var))
@@ -106,26 +141,30 @@ class GlorysPreprocessor:
             self.ds.lon.values,
             mask=mask_ocean
         )
-        da_u_filtered = []
-        da_v_filtered = []
-        for k in range(len(self.z_target)):
-            hf = HorizontalFilter(grid,k,self.ds.time)
-            da_u_go = da_u.isel(zt=k)
-            da_v_go = da_v.isel(zt=k)
-            u, u_filtered = hf.apply_filter(da_u_go)
-            v, v_filtered = hf.apply_filter(da_v_go)
-            #if k==len(self.z_target)-1:
-            #    print("plot")
-            #    hf.plot_filtered_field(var_i,var_filtered,var)
-            da_u_filtered.append(u_filtered)
-            da_v_filtered.append(v_filtered)
-        
-        u_filtered = xr.concat(da_u_filtered, dim="zt")
-        v_filtered = xr.concat(da_v_filtered, dim="zt")
-        u_filtered = u_filtered.assign_coords(zt=self.z_target)
-        v_filtered = v_filtered.assign_coords(zt=self.z_target)
-        regrid_u = HorizontalRegridder(u_filtered, self.target_grid_u,weights_path='/Odyssey/private/e25cheve/data/Weights/weights_u_Glorys12.nc')
-        regrid_v = HorizontalRegridder(v_filtered, self.target_grid_v,weights_path='/Odyssey/private/e25cheve/data/Weights/weights_v_Glorys12.nc')
+        if self.filtering:
+            da_u_filtered = []
+            da_v_filtered = []
+            for k in range(len(self.z_target)):
+                hf = HorizontalFilter(grid,k,self.ds.time)
+                da_u_go = da_u.isel(zt=k)
+                da_v_go = da_v.isel(zt=k)
+                u, u_filtered = hf.apply_filter(da_u_go)
+                v, v_filtered = hf.apply_filter(da_v_go)
+                #if k==len(self.z_target)-1:
+                #    print("plot")
+                #    hf.plot_filtered_field(var_i,var_filtered,var)
+                da_u_filtered.append(u_filtered)
+                da_v_filtered.append(v_filtered)
+            
+            u_filtered = xr.concat(da_u_filtered, dim="zt")
+            v_filtered = xr.concat(da_v_filtered, dim="zt")
+            u_filtered = u_filtered.assign_coords(zt=self.z_target)
+            v_filtered = v_filtered.assign_coords(zt=self.z_target)
+        else:
+            u_filtered = da_u
+            v_filtered = da_v
+        regrid_u = HorizontalRegridder(u_filtered, self.target_grid_u,weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name))
+        regrid_v = HorizontalRegridder(v_filtered, self.target_grid_v,weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name))
         final_u = regrid_u(u_filtered)
         final_u = final_u.rename({"lon":"lon_u"})
         final_u = final_u.transpose("time", "zt", "lat", "lon_u")
@@ -136,17 +175,74 @@ class GlorysPreprocessor:
         final_v = final_v.fillna(0)
         return xr.Dataset({var[0]:final_u, var[1]:final_v})
 
+    def run_vector_2D(self, var):
+
+        da_u = self.ds[var[0]]
+        da_v = self.ds[var[1]]
+
+        mask_ocean = np.isfinite(da_u.isel(time=0))
+
+        grid = LatLonGrid(
+            self.ds.lat.values,
+            self.ds.lon.values,
+            mask=mask_ocean
+        )
+
+        if self.filtering:
+            hf = HorizontalFilter(grid, -1, self.ds.time)
+
+            u, u_filtered = hf.apply_filter(da_u)
+            v, v_filtered = hf.apply_filter(da_v)
+        else:
+            u_filtered = da_u
+            v_filtered = da_v
+
+        regrid_u = HorizontalRegridder(
+            u_filtered,
+            self.target_grid_u,
+            weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name)
+        )
+
+        regrid_v = HorizontalRegridder(
+            v_filtered,
+            self.target_grid_v,
+            weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name)
+        )
+
+        final_u = regrid_u(u_filtered)
+        final_u = final_u.rename({"lon": "lon_u"})
+        final_u = final_u.transpose("time", "lat", "lon_u")
+        final_u = final_u.fillna(0)
+
+        final_v = regrid_v(v_filtered)
+        final_v = final_v.rename({"lat": "lat_u"})
+        final_v = final_v.transpose("time", "lat_u", "lon")
+        final_v = final_v.fillna(0)
+
+        return xr.Dataset({
+            var[0]: final_u,
+            var[1]: final_v
+        })
+
 
     def write(self, variables, output_dir, filename="output.nc"):
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, filename)
-    
+         
         for var in variables: 
             if not os.path.exists(output_path):
                 if isinstance(var,list):
-                    ds_new = self.run_vector(var)
-                    ds_u = ds_new[var[0]].chunk({"zt":6,"lat":-1,"lon_u":-1,})
-                    ds_v = ds_new[var[1]].chunk({"zt":6,"lat_u":-1,"lon":-1,})
+                    data_var = self.ds[var[0]]
+                    ndim = data_var.ndim
+                    if ndim == 4:
+                        ds_new = self.run_vector(var)
+                        ds_u = ds_new[var[0]].chunk({"time":self.chunker["time"],"zt":self.chunker["zt"],"lat":-1,"lon_u":-1,})
+                        ds_v = ds_new[var[1]].chunk({"time":self.chunker["time"],"zt":self.chunker["zt"],"lat_u":-1,"lon":-1,})
+                    elif ndim ==3:
+                        ds_new = self.run_vector_2D(var)
+                        ds_u = ds_new[var[0]].chunk({"time":self.chunker["time"],"lat":-1,"lon_u":-1,})
+                        ds_v = ds_new[var[1]].chunk({"time":self.chunker["time"],"lat_u":-1,"lon":-1,})
+
                     with ProgressBar():
                         ds_u.to_netcdf(output_path, mode="w",compute=True)
                     with ProgressBar():
@@ -158,11 +254,11 @@ class GlorysPreprocessor:
                     if ndim == 4:
                         ds_new = self.run(var)
                         ds_new = ds_new.transpose("time", "zt", "lat", "lon")
-                        ds_new = ds_new.chunk({"time": 4, "zt": 1, "lat": -1, "lon": -1})
+                        ds_new = ds_new.chunk({"time": self.chunker["time"], "zt": self.chunker["zt"], "lat": -1, "lon": -1})
                     elif ndim == 3:
                         ds_new = self.run_2D(var)
                         ds_new = ds_new.transpose("time", "lat", "lon")
-                        ds_new = ds_new.chunk({"time": 4, "lat": -1, "lon": -1})
+                        ds_new = ds_new.chunk({"time": self.chunker["time"], "lat": -1, "lon": -1})
                     with ProgressBar():
                         ds_new.to_netcdf(output_path, mode="w",compute=True)
                     print(f"Created file and wrote variable '{var}'")
@@ -179,25 +275,34 @@ class GlorysPreprocessor:
                         continue
 
             if isinstance(var,list):
-                ds_new = self.run_vector(var)
-                ds_u = ds_new[var[0]].chunk({"zt":6,"lat":-1,"lon_u":-1,})
-                ds_v = ds_new[var[1]].chunk({"zt":6,"lat_u":-1,"lon":-1,})
+                data_var = self.ds[var[0]]
+                ndim = data_var.ndim
+                if ndim == 4:
+                    ds_new = self.run_vector(var)
+                    ds_u = ds_new[var[0]].chunk({"time":self.chunker["time"],"zt":self.chunker["zt"],"lat":-1,"lon_u":-1,})
+                    ds_v = ds_new[var[1]].chunk({"time":self.chunker["time"],"zt":self.chunker["zt"],"lat_u":-1,"lon":-1,})
+                elif ndim ==3:
+                    ds_new = self.run_vector_2D(var)
+                    ds_u = ds_new[var[0]].chunk({"time":self.chunker["time"],"lat":-1,"lon_u":-1,})
+                    ds_v = ds_new[var[1]].chunk({"time":self.chunker["time"],"lat_u":-1,"lon":-1,})
+
                 with ProgressBar():
                     ds_u.to_netcdf(output_path, mode="a",compute=True)
                 with ProgressBar():
                     ds_v.to_netcdf(output_path, mode="a",compute=True)
-                print(f"Created file and wrote variables '{var[0]}' & '{var[1]}'")
+                print(f"Appended variables '{var[0]}' & '{var[1]}'")
+
             else:
                 data_var = self.ds[var]
                 ndim = data_var.ndim
                 if ndim == 4:
                     ds_new = self.run(var)
                     ds_new = ds_new.transpose("time", "zt", "lat", "lon")
-                    ds_new = ds_new.chunk({"time": 4, "zt": 1, "lat": -1, "lon": -1})
+                    ds_new = ds_new.chunk({"time": self.chunker["time"], "zt": self.chunker["zt"], "lat": -1, "lon": -1})
                 elif ndim == 3:
                     ds_new = self.run_2D(var)
                     ds_new = ds_new.transpose("time", "lat", "lon")
-                    ds_new = ds_new.chunk({"time": 4, "lat": -1, "lon": -1})
+                    ds_new = ds_new.chunk({"time": self.chunker["time"], "lat": -1, "lon": -1})
                 with ProgressBar():
                     ds_new.to_netcdf(output_path, mode="a",compute=True)
                 print(f"Appended variable '{var}' to existing file")
@@ -412,43 +517,77 @@ class HorizontalFilter:
 
 
 class HorizontalRegridder:
-    def __init__(self, da_src, ds_tgt,weights_path='/Odyssey/private/e25cheve/data/Weights/weights_Glorys12.nc', method="bilinear",verbose=True):
-        self.grid_src = da_src.to_dataset()[["lat", "lon"]]
-        self.grid_tgt = ds_tgt[["lat", "lon"]]
+    def __init__(self, da_src, ds_tgt,weights_path=None, method="bilinear",verbose=True):
+        self.lon_tgt_original = ds_tgt["lon"].values
+        grid_src = da_src.to_dataset()[["lat", "lon"]].copy()
+        grid_tgt = ds_tgt[["lat", "lon"]].copy()
+
+        grid_tgt["lon"] = grid_tgt["lon"] % 360
+
+        grid_tgt = grid_tgt.sortby("lon")
+
+        self.grid_src = grid_src
+        self.grid_tgt = grid_tgt
+
         if os.path.exists(weights_path):
-            if verbose: print("Reusing existing weights:", weights_path)
-            self.regridder = xe.Regridder(self.grid_src, self.grid_tgt, method, reuse_weights=True, filename=weights_path)
+            if verbose:
+                print("Reusing existing weights:", weights_path)
+            self.regridder = xe.Regridder(
+                self.grid_src,
+                self.grid_tgt,
+                method,
+                periodic=True,
+                reuse_weights=True,
+                filename=weights_path,
+            )
         else:
-            if verbose: print("Computing weights (one-time cost)…")
-            self.regridder = xe.Regridder(self.grid_src, self.grid_tgt, method, reuse_weights=False, filename=weights_path)
+            if verbose:
+                print("Computing weights (one-time cost)…")
+            self.regridder = xe.Regridder(
+                self.grid_src,
+                self.grid_tgt,
+                method,
+                periodic=True,
+                reuse_weights=False,
+                filename=weights_path,
+            )
 
     def __call__(self, ds):
-        return self.regridder(ds)
+        out = self.regridder(ds)
+        out = out.assign_coords(lon=self.lon_tgt_original)
+        out = out.sortby("lon")
+        shift = np.argmin(np.abs(self.grid_tgt.lon.values - self.lon_tgt_original[0]))
+        out = out.roll(lon=-shift, roll_coords=False)
+        return out
 
 def main():
     client = Client(n_workers=16, threads_per_worker=1)
 
-    variables = ["thetao", "so", "zos", "mlotst"]
-    glorys_pattern = "/Odyssey/private/e25cheve/data/Glorys_Climatology/mercatorglorys12v1_gl12_mean_1993_*"
-    grid_path = "/Odyssey/private/e25cheve/data/interp_grid_60_levels.nc"
+    variables = [['ewss','nsss'],'tp','e','ssr','str','sshf','slhf']
+    #glorys_pattern = "/Odyssey/private/e25cheve/data/Glorys_Climatology/mercatorglorys12v1_gl12_mean_1993_*"
+    pattern = '/Odyssey/private/e25cheve/data/ERA5_1deg_Flux/*'
 
-    files = sorted(glob(glorys_pattern))
+    grid_file = "/Odyssey/private/e25cheve/data/interp_grid_60_levels.nc"
+
+    files = sorted(glob(pattern))
 
     for f in files:
         print(f"Processing {f}")
 
-        Glo = GlorysPreprocessor(
+        Glo = Preprocessor(
             f,
-            grid_path,
-            single_depth=False,
-            verbose=True
+            grid_file,
+            single_depth=True,
+            verbose=True,
+            filtering=False,
+            weight_name='era5'
         )
 
-        output_name = os.path.basename(f).replace(".nc", "_validation.nc")
+        output_name = os.path.basename(f).replace(".nc", "_processed.nc")
 
         Glo.write(
             variables,
-            "/Odyssey/private/e25cheve/data/Glorys_Climatology/",
+            "/Odyssey/private/e25cheve/data/ERA5_1deg_Flux_processed/",
             output_name
         )
 
@@ -698,5 +837,3 @@ if __name__ == "__main__":
 #axs[2].set(title=f'Residual ',
 #           ylabel='')
 
-#plt.savefig(output_dir+'Glorys_preproc_comparaison_vo.png',format='png',dpi=300)
-#plt.close()
