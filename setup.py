@@ -8,7 +8,6 @@ import os
 
 here = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(here)
-import versioneer  # noqa: E402
 
 
 CLASSIFIERS = """
@@ -41,9 +40,8 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/elliotchevet/veros_global_realistic",
     python_requires=">=3.12.12",
-    version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
     packages=find_packages(),
+    version="0.1.0",
     install_requires=INSTALL_REQUIRES,
     entry_points={
         "veros.setup_dirs": [
