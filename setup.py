@@ -31,7 +31,7 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
 
 setup(
     name="veros_global_realistic",
-    license="IMT-Atlantique",
+    license="MIT",
     author="Elliot Chevet",
     author_email="elliot.chevet@imt-atlantique.fr",
     keywords="oceanography python geophysics ocean-model veros plugin",
