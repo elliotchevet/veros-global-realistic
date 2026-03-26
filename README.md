@@ -43,16 +43,9 @@ Typical workflow:
 
 #### (a) ERA5 Forcings
 
-Download ERA5 data (hourly resolution) using your preferred method (e.g. CDS API), then run:
+Prepare forcings from ERA5 reanalysis:
 
-```bash
-python -m veros_global_realistic.preprocessing.era5 \
-    --input /path/to/raw_era5 \
-    --grid /path/to/veros_grid.nc \
-    --output /path/to/processed_forcing.nc
-```
-
-This step:
+This preprocessing:
 
 - filters required atmospheric variables  
 - interpolates fields to the Veros grid  
@@ -63,13 +56,6 @@ This step:
 #### (b) GLORYS Initialization
 
 Prepare initial conditions from GLORYS reanalysis:
-
-```bash
-python -m veros_global_realistic.preprocessing.glorys \
-    --input /path/to/glorys_data \
-    --grid /path/to/veros_grid.nc \
-    --output /path/to/initial_conditions.nc
-```
 
 This preprocessing:
 
@@ -82,36 +68,6 @@ This preprocessing:
 ### 3. Run the Setup
 
 After installation, the setup becomes available to Veros:
-
-```bash
-veros run global_realistic
-```
-
-(or run through your standard Veros workflow)
-
----
-
-## Project Structure
-
-```text
-veros_global_realistic/
-├── veros_global_realistic/
-│   ├── setup/
-│   ├── preprocessing/
-│   └── ...
-├── README.md
-├── LICENSE
-└── setup.py / pyproject.toml
-```
-
----
-
-## Requirements
-
-- Python ≥ 3.8  
-- Veros ≥ 1.4  
-- ERA5 datasets  
-- GLORYS ocean reanalysis data  
 
 ---
 
