@@ -5,8 +5,7 @@ except ImportError:
         'Plugin needs Veros to be installed (try `pip install veros`)'
     )
 
-from . import _version
-__version__ = _version.get_versions()['version']
+__version__ ="0.1.0" 
 
 from veros_global_realistic.real import real
 from veros_global_realistic.set_inits import set_inits
