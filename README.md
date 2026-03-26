@@ -13,8 +13,6 @@ It includes:
 
 The plugin is designed to simplify realistic ocean simulations by providing a consistent workflow for data preparation and model configuration.
 
----
-
 ## Quick Usage
 
 ### 1. Installation
@@ -22,14 +20,12 @@ The plugin is designed to simplify realistic ocean simulations by providing a co
 Clone the repository and install the plugin in editable mode:
 
 ```bash
-git clone https://github.com/yourusername/veros_global_realistic.git
+git clone https://github.com/elliotchevet/veros_global_realistic.git
 cd veros_global_realistic
 pip install -e .
 ```
 
 Editable installation (`-e`) is recommended so that modifications to the setup or preprocessing tools are immediately available.
-
----
 
 ### 2. Prepare Forcing and Initialization Data
 
@@ -45,31 +41,13 @@ Typical workflow:
 
 Prepare forcings from ERA5 reanalysis:
 
-This preprocessing:
-
-- filters required atmospheric variables  
-- interpolates fields to the Veros grid  
-- produces forcing files compatible with the setup  
-
----
-
 #### (b) GLORYS Initialization
 
 Prepare initial conditions from GLORYS reanalysis:
 
-This preprocessing:
-
-- extracts temperature, salinity, and velocity fields  
-- interpolates them onto the Veros grid  
-- creates initialization files ready for simulation  
-
----
-
 ### 3. Run the Setup
 
 After installation, the setup becomes available to Veros:
-
----
 
 ## License
 
