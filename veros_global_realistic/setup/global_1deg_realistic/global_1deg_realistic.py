@@ -251,7 +251,7 @@ class GlobalOneDegreeSetup(VerosSetup):
         salt_raw = self._read_init("so")[:, :,:,0]
         salt_filled = self.fill_zeros_downward(salt_raw)
         xt_init, yt_init, zt_init = (self._read_init(k) for k in ("lon","lat","zt"))
-        salt_data = tools.interpolate((xt_init, yt_init, zt_init), salt_raw, t_grid)
+        salt_data = tools.interpolate((xt_init, yt_init, zt_init), salt_filled, t_grid)
         
         land_mask = (vs.zt[npx.newaxis, npx.newaxis, :] <= topo_z_smoothed[..., npx.newaxis]) | (salt_data == 0)
 
@@ -345,13 +345,13 @@ class GlobalOneDegreeSetup(VerosSetup):
         
         temp_raw = self._read_init("thetao")[...,0]
         temp_filled = self.fill_zeros_downward(temp_raw)
-        temp_data = tools.interpolate((xt_init, yt_init, zt_init), temp_raw, t_grid)
+        temp_data = tools.interpolate((xt_init, yt_init, zt_init), temp_filled, t_grid)
         vs.temp = update(vs.temp, at[2:-2, 2:-2, :, 0], temp_data * vs.maskT[2:-2, 2:-2, :])
         vs.temp = update(vs.temp, at[2:-2, 2:-2, :, 1], temp_data * vs.maskT[2:-2, 2:-2, :])
 
         salt_raw = self._read_init("so")[...,0]
         salt_filled = self.fill_zeros_downward(salt_raw)
-        salt_data = tools.interpolate((xt_init, yt_init, zt_init), salt_raw, t_grid)
+        salt_data = tools.interpolate((xt_init, yt_init, zt_init), salt_filled, t_grid)
         vs.salt = update(vs.salt, at[2:-2, 2:-2, :, 0], salt_data * vs.maskT[2:-2, 2:-2, :])
         vs.salt = update(vs.salt, at[2:-2, 2:-2, :, 1], salt_data * vs.maskT[2:-2, 2:-2, :])
 

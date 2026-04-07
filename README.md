@@ -6,10 +6,10 @@
 
 It includes:
 
-- 🌍 A global realistic model setup  
-- 🌬️ Hourly ERA5 atmospheric forcings  
-- 🌊 GLORYS-based ocean initialization  
-- 🧰 Preprocessing tools to prepare forcing and initialization datasets  
+- A global realistic model setup  
+- Hourly ERA5 atmospheric forcings  
+- GLORYS-based ocean initialization  
+- Preprocessing tools to prepare forcing and initialization datasets  
 
 The plugin is designed to simplify realistic ocean simulations by providing a consistent workflow for data preparation and model configuration.
 
