@@ -164,8 +164,8 @@ class Diagnostics:
                     transform=ccrs.PlateCarree()
                 )
     
-            ax.add_feature(cfeature.GSHHSFeature("low", levels=[1, 2, 6]))
-            ax.coastlines()
+            #ax.add_feature(cfeature.GSHHSFeature("low", levels=[1, 2, 6]))
+            #ax.coastlines()
     
             plt.title(f"{title} (t={t})", fontsize=18)
     
@@ -340,7 +340,7 @@ class Diagnostics:
 
     def salt(self, n_years=10, vert=False, snapshot=False, Gif=False, start_gif=None, end_gif=None):
         cmap = cmo.cm.haline
-        idx = self.get_time_indices(n_years,snapshot=False)
+        idx = self.get_time_indices(n_years,snapshot=snapshot)
         if snapshot:
             year = self.snap_dates[idx[-1]].year
             ds = self.ds_snap
@@ -589,7 +589,7 @@ class Diagnostics:
     
         print('MLD plot done')
 
-    def velocity(self, n_years=10, vert=False,snapshot=False, Gif=False, start_gif=None, end_gif=None):
+    def velocity(self, n_years=10, level=-1, vert=False,snapshot=False, Gif=False, start_gif=None, end_gif=None):
         idx = self.get_time_indices(n_years,snapshot)
         cmap = cmo.cm.speed
         if snapshot:
@@ -603,8 +603,8 @@ class Diagnostics:
             if start_gif is not None or end_gif is not None:
                 idx_gif = idx[start_gif:end_gif]
             if vert:
-                u = ds.variables["u"][idx_gif, :, 80, :]
-                v = ds.variables["v"][idx_gif, :, 80, :]
+                u = ds.variables["u"][idx_gif, :, 80, self.sort_idx]
+                v = ds.variables["v"][idx_gif, :, 80, self.sort_idx]
                 speed = np.sqrt(u**2 + v**2)
                 self.vertical_plot_map_gif(
                         self.xt, self.zt, speed,
@@ -614,15 +614,15 @@ class Diagnostics:
                     )
 
             else:
-                u = ds.variables["u"][idx_gif, -1, :, :]
-                v = ds.variables["v"][idx_gif, -1, :, :]
+                u = ds.variables["u"][idx_gif, level, :, :]
+                v = ds.variables["v"][idx_gif, level, :, :]
                 u = u[:,:,self.sort_idx]
                 v = v[:,:,self.sort_idx]
                 speed = np.sqrt(u**2 + v**2)
                 self.plot_map_gif(
                         self.xt, self.yt, speed,
                         f"Surface velocity evolution)",
-                        f"Velocity_{year}.gif",
+                        f"Velocity_{year}_{level}.gif",
                         cmap=cmap
                     )
         else:    
@@ -644,11 +644,11 @@ class Diagnostics:
                 )
             else:
                 u = np.mean(
-                    ds.variables["u"][idx, -1, :, :],
+                    ds.variables["u"][idx, level, :, :],
                     axis=0
                 )
                 v = np.mean(
-                    ds.variables["v"][idx, -1, :, :],
+                    ds.variables["v"][idx, level, :, :],
                     axis=0
                 )
                 u = u[:, self.sort_idx]
@@ -657,17 +657,28 @@ class Diagnostics:
                 self.plot_map(
                     self.xt, self.yt, speed,
                     f"Surface velocity (last {n_years} years)",
-                    f"Velocity_{year}.pdf",
+                    f"Velocity_{year}_{level}.pdf",
                     cmap=cmap
                 )
         print("Velocity done")
 
     def energy(self):
         eke_m = self.ds_energy['k_m'][:]
-        x = [datetime(d.year, d.month, d.day, d.hour) for d in self.nrj_dates[:]]
+        x = []
+        eke_full = []
+        i = 0
+        for d in self.nrj_dates:
+            try:
+                x.append(datetime(d.year, d.month, d.day, d.hour,d.minute))
+                eke_full.append(eke_m[i])
+                i +=1
+            except ValueError:
+                print('hey')
+                i +=1
+                continue
         fig, ax = plt.subplots(figsize=(9, 4))
          
-        ax.plot(x, eke_m,color='black', lw=0.5)
+        ax.plot(x, eke_full,color='black', lw=0.5)
         ax.set_xlabel("Time")
         ax.set_ylabel(r"$k_m$")
         ax.set_title(r"$k_m$ convergence")
@@ -682,63 +693,73 @@ class Diagnostics:
         ax.grid(True,alpha=0.3)
         fig.autofmt_xdate()
         plt.tight_layout()
-        plt.savefig(self.folder_path/'Pre_Energy_plot_ssh.pdf')
+        plt.savefig(self.folder_path/'Energy_plot_base.pdf')
         plt.close()
         print("Energy done")
         return x, eke_m
     
 
     def run_all(self, n_years_default=10):
-        self.temp(n_years_default,vert=True)
-        self.salt(n_years_default,vert=True) 
+        #self.temp(n_years_default,vert=False)
+        #self.salt(n_years_default,vert=False) 
         #self.ssh(n_years_default)
-        #self.velocity(n_years=1,vert=True)
-        #self.velocity(n_years_default,vert=False)
-        #self.energy()
+        #self.velocity(n_years=1,vert=False)
+        #self.temp(n_years_default,snapshot=True,vert=False,Gif=True,start_gif=-24,end_gif=-1)
+        #self.salt(n_years_default,snapshot=True,vert=False,Gif=True,start_gif=-24,end_gif=-1)
+        self.velocity(n_years_default,level=-1,snapshot=True,vert=False,Gif=True,start_gif=0,end_gif=24)
+        #self.velocity(n_years_default,level=-2,snapshot=True,vert=False,Gif=True,start_gif=0,end_gif=24)
+        #self.velocity(n_years_default,level=-3,snapshot=True,vert=False,Gif=True,start_gif=0,end_gif=24)
+        #self.velocity(n_years_default,level=-4,snapshot=True,vert=False,Gif=True,start_gif=0,end_gif=24)
+        self.energy()
         #self.heat_flux(n_years_default)
         #self.mld(n_years=1)
 
 start = datetime(1986,1,1)
-run_dir_bat = "/Odyssey/private/e25cheve/simu_veros/runs/test_bathy/"
-run_dir_smooth = "/Odyssey/private/e25cheve/simu_veros/runs/test_bathy/output_bathy_both/"
+run_dir = "/Odyssey/private/e25cheve/simu_veros/runs/global_1deg_realistic/"
+#run_dir_UV = "/Odyssey/private/e25cheve/simu_veros/runs/test_UV/"
+run_dir_smooth = "/Odyssey/private/e25cheve/simu_veros/runs/global_1deg_realistic/TS/"
 run_dir_TS = "/Odyssey/private/e25cheve/simu_veros/runs/TS_glorys/"
 run_dir_TSUV = "/Odyssey/private/e25cheve/simu_veros/runs/TSUV_glorys/"
 run_dir_TSUVSSH = "/Odyssey/private/e25cheve/simu_veros/runs/TSUVSSH_glorys/"
-D_bat = Diagnostics(run_dir_bat,start)
+D = Diagnostics(run_dir,start)
+#D_UV = Diagnostics(run_dir_UV,start)
+D.run_all()
+#D_bat_smooth = Diagnostics(run_dir_smooth,start)
 #D_TS = Diagnostics(run_dir_TS,start)
-D_bat.run_all()
-#x_bat, nrj_bat = D_bat.energy()
-#x, nrj_TS = D_TS.energy()
+#D_bat.run_all()
+#D_bat_smooth.run_all()
+#x, nrj = D.energy()
+#x, nrj_UV = D_UV.energy()
 #D_TSUV = Diagnostics(run_dir_TSUV,start)
 #x, nrj_TSUV = D_TSUV.energy()
 #D_TSUVSSH = Diagnostics(run_dir_TSUVSSH,start)
 #x, nrj_TSUVSSH = D_TSUVSSH.energy()
 #D_smooth = Diagnostics(run_dir_smooth,start)
-#x_smooth, nrj_smooth = D_smooth.energy()
+#x_smooth, nrj_smooth = D_bat_smooth.energy()
 #
 #fig, ax = plt.subplots(figsize=(9, 4))
-#ax.plot(x_bat, nrj_TS,color='black', lw=0.5,label="TS")
-#ax.plot(x, nrj_TSUV,color='red', lw=0.5,label="TSUV")
-#ax.plot(x, nrj_TSUVSSH,color='green', lw=0.5,label="TSUVSSH")
-#ax.plot(x_bat, nrj_bat,color='blue', lw=0.5,label="Smooth + friction")
-#ax.plot(x_bat, nrj_smooth,color='purple', lw=0.5,label="Smooth bathy")
-#
+#ax.plot(x, nrj,color='red', lw=0.5,label="TSUV")
+#ax.plot(x, nrj_UV,color='black', lw=0.5,label="TS")
+##ax.plot(x, nrj_TSUVSSH,color='green', lw=0.5,label="TSUVSSH")
+#ax.plot(x, nrj,color='k', lw=0.5,label="default")
+##ax.plot(x_bat, nrj_smooth,color='purple', lw=0.5,label="TS + friction")
+##
 #ax.set_xlabel("Time")
 #ax.set_ylabel(r"$k_m$")
 #ax.set_title(r"$k_m$ convergence")
-#
+##
 #locator = mdates.AutoDateLocator(minticks=5, maxticks=8)
 #formatter = mdates.ConciseDateFormatter(locator)
-#
+##
 #ax.xaxis.set_major_locator(locator)
 #ax.xaxis.set_major_formatter(formatter)
 #ax.xaxis.set_minor_locator(ticker.AutoMinorLocator(6))
-#
+##
 #ax.grid(True,alpha=0.3)
 #fig.autofmt_xdate()
 #plt.tight_layout()
 #plt.legend()
-#plt.savefig('/Odyssey/private/e25cheve/transfert/'+'Multi_Energy_plot_ssh.pdf')
+#plt.savefig('/Odyssey/private/e25cheve/transfert/'+'Pre_Energy_plot_UV_compa.pdf')
 #plt.close()
 
 

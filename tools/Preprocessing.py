@@ -12,14 +12,16 @@ import warnings
 from dask.diagnostics import ProgressBar
 from dask.distributed import Client
 from glob import glob
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
 class Preprocessor:
-    def __init__(self, src_path, target_path,single_depth=False,verbose=False,ncores=16,filtering=True,weight_path='/Odyssey/private/e25cheve/data/Weights',weight_name='glorys12'):
+    def __init__(self, src_path, target_path,single_depth=False,use_mask=True,verbose=False,ncores=16,filtering=True,weight_path='/Odyssey/private/e25cheve/data/Weights',weight_name='glorys12'):
         self.filtering = filtering
         self.weight_name = weight_name
-        self.weight_path = weight_path
+        self.weight_path = Path(weight_path)
+        self.use_mask = use_mask
         self.ds = xr.open_dataset(src_path, chunks={"time": 1})
         rename_dict = {}
         if "longitude" in self.ds.coords:
@@ -49,13 +51,13 @@ class Preprocessor:
         target_grid = xr.open_dataset(target_path, chunks={"time": 1})
         if "xt" in target_grid:
             if verbose: print("adjusting xt to lon")
-            self.target_grid = target_grid.rename({"xt": "lon", "yt": "lat"})
+            self.target_grid = target_grid.rename({"xt": "lon", "yt": "lat", "maskT": "mask"})
         if "xu" in target_grid:
             if verbose: print("adjusting xu to lon")
-            self.target_grid_u = target_grid.rename({"xu": "lon", "yt": "lat"})
+            self.target_grid_u = target_grid.rename({"xu": "lon", "yt": "lat", "maskU": "mask"})
         if "yu" in target_grid:
             if verbose: print("adjusting yu to lat")
-            self.target_grid_v = target_grid.rename({"xt": "lon", "yu": "lat"})
+            self.target_grid_v = target_grid.rename({"xt": "lon", "yu": "lat", "maskV": "mask"})
         if "zt" in self.ds.coords:
             if single_depth:
                 self.ds = self.ds.squeeze("zt",drop=True)
@@ -77,6 +79,7 @@ class Preprocessor:
                     self.chunker["zt"] = int(np.ceil(nz / depth_chunks))
         elif nz is not None and nz > 1:
             self.chunker["zt"] = int(np.ceil(nz / ncores))
+            self.chunker["time"] = -1
 
     def run(self, var):
         out = []
@@ -89,30 +92,32 @@ class Preprocessor:
             self.ds.lon.values,
             mask=mask_ocean
         )
-        if self.filtering:
-            da_filtered = []
-            for k in range(len(self.z_target)):
-                hf = HorizontalFilter(grid,k,self.ds.time)
-                da_interp_go = da.isel(zt=k)
-                var_i, var_filtered = hf.apply_filter(da_interp_go)
-                #if k==len(self.z_target)-1:
-                #    print("plot")
-                #    hf.plot_filtered_field(var_i,var_filtered,var)
-                da_filtered.append(var_filtered)
-            filtered = xr.concat(da_filtered, dim="zt")
-            filtered = filtered.assign_coords(zt=self.z_target)
-        else:
-            filtered = da
-        regrid = HorizontalRegridder(filtered, self.target_grid,weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
-        final_var = regrid(filtered)
-        final_var = final_var.fillna(0)
+        da_processed = []
+        for k in range(len(self.z_target)):
+            mask_ocean_k = mask_ocean.isel(zt=k).astype("int8")
+            if self.use_mask == False:
+                mask_ocean_k = None
+            hf = HorizontalFilter(grid,k,self.ds.time)
+            da_interp_go = da.isel(zt=k)
+            var_i, var_filtered = hf.apply_filter(da_interp_go)
+            regrid = HorizontalRegridder(
+                    var_filtered, mask_ocean_k, self.target_grid.isel(zt=k),
+                    weights_path=self.weight_path/'weights_{}_{}.nc'.format(self.weight_name,k)
+                    )
+            var_processed = regrid(var_filtered)
+            da_processed.append(var_processed)
+        processed = xr.concat(da_processed, dim="zt")
+        processed = processed.assign_coords(zt=self.z_target)
+        final_var = processed.fillna(0)
         out.append(final_var.to_dataset(name=var))
         return xr.merge(out)
 
     def run_2D(self, var):
         out = []
         da = self.ds[var]
-        mask_ocean = np.isfinite(da.isel(time=0))
+        mask_ocean = np.isfinite(da.isel(time=0)).astype("int8")
+        if self.use_mask == False:
+            mask_ocean = None
         grid = LatLonGrid(
             self.ds.lat.values,
             self.ds.lon.values,
@@ -123,11 +128,12 @@ class Preprocessor:
             var_i, var_filtered = hf.apply_filter(da)
         else:
             var_filtered = da
-        regrid = HorizontalRegridder(var_filtered, self.target_grid,weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
+        regrid = HorizontalRegridder(var_filtered,mask_ocean, self.target_grid.isel(zt=-1),weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
         final_var = regrid(var_filtered)
         final_var = final_var.fillna(0)
         out.append(final_var.to_dataset(name=var))
         return xr.merge(out)
+    
         
     def run_vector(self, var):
         da_u = self.ds[var[0]]
@@ -141,36 +147,38 @@ class Preprocessor:
             self.ds.lon.values,
             mask=mask_ocean
         )
-        if self.filtering:
-            da_u_filtered = []
-            da_v_filtered = []
-            for k in range(len(self.z_target)):
-                hf = HorizontalFilter(grid,k,self.ds.time)
-                da_u_go = da_u.isel(zt=k)
-                da_v_go = da_v.isel(zt=k)
-                u, u_filtered = hf.apply_filter(da_u_go)
-                v, v_filtered = hf.apply_filter(da_v_go)
-                #if k==len(self.z_target)-1:
-                #    print("plot")
-                #    hf.plot_filtered_field(var_i,var_filtered,var)
-                da_u_filtered.append(u_filtered)
-                da_v_filtered.append(v_filtered)
-            
-            u_filtered = xr.concat(da_u_filtered, dim="zt")
-            v_filtered = xr.concat(da_v_filtered, dim="zt")
-            u_filtered = u_filtered.assign_coords(zt=self.z_target)
-            v_filtered = v_filtered.assign_coords(zt=self.z_target)
-        else:
-            u_filtered = da_u
-            v_filtered = da_v
-        regrid_u = HorizontalRegridder(u_filtered, self.target_grid_u,weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name))
-        regrid_v = HorizontalRegridder(v_filtered, self.target_grid_v,weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name))
-        final_u = regrid_u(u_filtered)
-        final_u = final_u.rename({"lon":"lon_u"})
+        da_u_processed = []
+        da_v_processed = []
+        for k in range(len(self.z_target)):
+            mask_ocean_k = mask_ocean.isel(zt=k).astype("int8")
+            if self.use_mask == False:
+                mask_ocean_k = None
+            hf = HorizontalFilter(grid,k,self.ds.time)
+            da_u_go = da_u.isel(zt=k)
+            da_v_go = da_v.isel(zt=k)
+            u, u_filtered = hf.apply_filter(da_u_go)
+            v, v_filtered = hf.apply_filter(da_v_go)
+            regrid_u = HorizontalRegridder(
+                    u_filtered, mask_ocean, self.target_grid_u.isel(zt=k),
+                    weights_path=self.weight_path/'weights_u_{}_{}.nc'.format(self.weight_name,k)
+                    )
+            regrid_v = HorizontalRegridder(
+                    v_filtered, mask_ocean, self.target_grid_v.isel(zt=k),
+                    weights_path=self.weight_path/'weights_v_{}_{}.nc'.format(self.weight_name,k)
+                    )
+            var_u_processed = regrid_u(u_filtered)
+            var_v_processed = regrid_v(v_filtered)
+            da_u_processed.append(var_u_processed)
+            da_v_processed.append(var_v_processed)
+        
+        u_processed = xr.concat(da_u_processed, dim="zt")
+        v_processed = xr.concat(da_v_processed, dim="zt")
+        u_processed = u_processed.assign_coords(zt=self.z_target)
+        v_processed = v_processed.assign_coords(zt=self.z_target)
+        final_u = u_processed.rename({"lon":"lon_u"})
         final_u = final_u.transpose("time", "zt", "lat", "lon_u")
         final_u = final_u.fillna(0)
-        final_v = regrid_v(v_filtered)
-        final_v = final_v.rename({"lat":"lat_u"})
+        final_v = v_processed.rename({"lat":"lat_u"})
         final_v = final_v.transpose("time", "zt", "lat_u", "lon")
         final_v = final_v.fillna(0)
         return xr.Dataset({var[0]:final_u, var[1]:final_v})
@@ -180,7 +188,9 @@ class Preprocessor:
         da_u = self.ds[var[0]]
         da_v = self.ds[var[1]]
 
-        mask_ocean = np.isfinite(da_u.isel(time=0))
+        mask_ocean = np.isfinite(da_u.isel(time=0)).astype("int8")
+        if self.use_mask == False:
+            mask_ocean = None
 
         grid = LatLonGrid(
             self.ds.lat.values,
@@ -199,13 +209,15 @@ class Preprocessor:
 
         regrid_u = HorizontalRegridder(
             u_filtered,
-            self.target_grid_u,
+            mask_ocean,
+            self.target_grid_u.isel(zt=-1),
             weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name)
         )
 
         regrid_v = HorizontalRegridder(
             v_filtered,
-            self.target_grid_v,
+            mask_ocean,
+            self.target_grid_v.isel(zt=-1),
             weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name)
         )
 
@@ -517,15 +529,15 @@ class HorizontalFilter:
 
 
 class HorizontalRegridder:
-    def __init__(self, da_src, ds_tgt,weights_path=None, method="bilinear",verbose=True):
+    def __init__(self, da_src,mask_src, ds_tgt,weights_path=None, method="bilinear",verbose=True):
         self.lon_tgt_original = ds_tgt["lon"].values
         grid_src = da_src.to_dataset()[["lat", "lon"]].copy()
         grid_tgt = ds_tgt[["lat", "lon"]].copy()
-
+        if mask_src is not None:
+            grid_src["mask"] = mask_src
+            grid_tgt["mask"] = ds_tgt["mask"]
         grid_tgt["lon"] = grid_tgt["lon"] % 360
-
         grid_tgt = grid_tgt.sortby("lon")
-
         self.grid_src = grid_src
         self.grid_tgt = grid_tgt
 
@@ -539,6 +551,7 @@ class HorizontalRegridder:
                 periodic=True,
                 reuse_weights=True,
                 filename=weights_path,
+                extrap_method='inverse_dist'
             )
         else:
             if verbose:
@@ -550,6 +563,7 @@ class HorizontalRegridder:
                 periodic=True,
                 reuse_weights=False,
                 filename=weights_path,
+                extrap_method='inverse_dist'
             )
 
     def __call__(self, ds):
@@ -562,278 +576,26 @@ class HorizontalRegridder:
 
 def main():
     client = Client(n_workers=16, threads_per_worker=1)
-
-    variables = [['ewss','nsss'],'tp','e','ssr','str','sshf','slhf']
-    #glorys_pattern = "/Odyssey/private/e25cheve/data/Glorys_Climatology/mercatorglorys12v1_gl12_mean_1993_*"
-    pattern = '/Odyssey/private/e25cheve/data/ERA5_1deg_Flux/*'
-
-    grid_file = "/Odyssey/private/e25cheve/data/interp_grid_60_levels.nc"
-
-    files = sorted(glob(pattern))
-
+    variables = ['thetao','so',['uo','vo'],'zos']
+    glorys_pattern = "/Odyssey/private/e25cheve/data/Glorys_Climatology/mercatorglorys12v1_gl12_mean_199301.nc"
+    grid_file = "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg/masks_raw.nc"
+    files = sorted(glob(glorys_pattern))
     for f in files:
         print(f"Processing {f}")
-
         Glo = Preprocessor(
             f,
             grid_file,
-            single_depth=True,
+            single_depth=False,
             verbose=True,
-            filtering=False,
-            weight_name='era5'
+            weight_name='glorys12_raw'
         )
-
-        output_name = os.path.basename(f).replace(".nc", "_processed.nc")
-
+        output_name = os.path.basename(f).replace(".nc", "_raw_processed.nc")
         Glo.write(
             variables,
-            "/Odyssey/private/e25cheve/data/ERA5_1deg_Flux_processed/",
+            "/Odyssey/private/e25cheve/data/Glorys_Climatology/",
             output_name
         )
 
-
 if __name__ == "__main__":
     main()
-
-#Lat = Glo.ds.lat
-#Lon = Glo.ds.lon
-#dxw = grid.dxw
-#dyw = grid.dyw
-#dxs = grid.dxs
-#dys = grid.dys
-#area = grid.area
-#
-#
-#fig, axs = plt.subplots(3, 2, figsize=(18, 12))
-#cmap = "viridis"
-#
-#im0 = axs[0, 0].pcolormesh(Lon, Lat, dxw, cmap=cmap)
-#axs[0, 0].set_title("dxw (m)")
-#fig.colorbar(im0, ax=axs[0, 0])
-#
-#im1 = axs[0, 1].pcolormesh(Lon, Lat, dyw, cmap=cmap)
-#axs[0, 1].set_title("dyw (m)")
-#fig.colorbar(im1, ax=axs[0, 1])
-#
-#im2 = axs[1, 0].pcolormesh(Lon, Lat, dxs, cmap=cmap)
-#axs[1, 0].set_title("dxs (m)")
-#fig.colorbar(im2, ax=axs[1, 0])
-#
-#im3 = axs[1, 1].pcolormesh(Lon, Lat, dys, cmap=cmap)
-#axs[1, 1].set_title("dys (m)")
-#fig.colorbar(im3, ax=axs[1, 1])
-#
-#im4 = axs[2, 0].pcolormesh(Lon, Lat, area, cmap=cmap)
-#axs[2, 0].set_title("Cell Area (m²)")
-#fig.colorbar(im4, ax=axs[2, 0])
-#
-#axs[2, 1].axis("off")
-#
-#for ax in axs.flat:
-#    ax.set_xlabel("Longitude")
-#    ax.set_ylabel("Latitude")
-#
-#plt.tight_layout()
-#plt.savefig("/Odyssey/private/e25cheve/transfert/grid_assets_glorys")
-#plt.close()
-#da_interp = Glo.run(variables)
-#
-#
-#
-## --- Extract variables ---
-#theta_orig = Glo.ds["thetao"]
-#theta_interp = da_interp["thetao"]  # already a DataArray
-#
-## --- Select one time (important for clarity) ---
-#theta_orig = theta_orig.isel(time=0)
-#theta_interp = theta_interp.isel(time=0)
-#
-## --- Compute zonal mean (average over longitude) ---
-#theta_orig_zm = theta_orig.mean(dim="lon", skipna=True)
-#theta_interp_zm = theta_interp.mean(dim="lon", skipna=True)
-#
-## --- Coordinates ---
-#lat_orig = theta_orig_zm["lat"]
-#lat_interp = theta_interp_zm["lat"]
-#
-#z_orig = theta_orig_zm["depth"] if "depth" in theta_orig_zm.coords else theta_orig_zm["zt"]
-#z_interp = theta_interp_zm["zt"]
-#
-#vmin = np.nanpercentile(theta_orig_zm, 1)
-#vmax = np.nanpercentile(theta_orig_zm, 99)
-#levels = np.linspace(vmin, vmax, 40)
-#
-#fig, axes = plt.subplots(
-#    nrows=1, ncols=2,
-#    figsize=(16, 6),
-#    sharey=True,
-#    constrained_layout=True
-#)
-#
-## ---- BEFORE vertical interpolation ----
-#cf1 = axes[0].contourf(
-#    lat_orig, z_orig,
-#    theta_orig_zm,
-#    levels=levels,
-#    cmap="RdBu_r",
-#    extend="both"
-#)
-#axes[0].set_title("Before vertical interpolation")
-#axes[0].set_xlabel("Latitude")
-#axes[0].set_ylabel("Depth (m)")
-#axes[0].invert_yaxis()
-#
-## ---- AFTER vertical interpolation ----
-#cf2 = axes[1].contourf(
-#    lat_interp, z_interp,
-#    theta_interp_zm,
-#    levels=levels,
-#    cmap="RdBu_r",
-#    extend="both"
-#)
-#axes[1].set_title("After vertical interpolation")
-#axes[1].set_xlabel("Latitude")
-#axes[1].invert_yaxis()
-#
-## ---- Colorbar ----
-#cbar = fig.colorbar(cf2, ax=axes, orientation="vertical", shrink=0.9)
-#cbar.set_label("Potential temperature (°C)")
-#
-#plt.savefig("/Odyssey/private/e25cheve/transfert/vert_interp.pdf")
-#import cartopy.crs as ccrs
-#import cartopy.feature as cfeature
-#import scienceplots
-#plt.style.use('science')
-#
-#
-#time_index=0
-#output_dir = "/Odyssey/private/e25cheve/transfert/"
-#ds_glorys = xr.open_dataset(glorys_path, chunks={"time": 1})
-#vo_glo = ds_glorys['vo']
-#
-#res_path ="/Odyssey/private/e25cheve/data/Glorys_CI_test_1993_01.nc"
-#ds_res = xr.open_dataset(res_path, chunks={"time": 1})
-#ds_res = ds_res.assign_coords(
-#        lon=(((ds_res.lon + 180) % 360) - 180)
-#).sortby("lon")
-#ds_res = ds_res.assign_coords(
-#    zt = -ds_res.zt
-#).sortby("zt")
-#
-#vo_res = ds_res['vo']
-
-
-
-#thetao_glo_zm = (
-#    thetao_glo
-#    .isel(time=time_index)
-#    .mean(dim="longitude", skipna=True)
-#)
-#
-#uo_res_zm = (
-#    uo_res
-#    .isel(time=time_index)
-#    .mean(dim="lon", skipna=True)
-#)
-#vmin = float(min(thetao_glo_zm.min(), uo_res_zm.min()))
-#vmax = float(max(thetao_glo_zm.max(), uo_res_zm.max()))
-#units = uo_glo.units
-#
-#fig, axs = plt.subplots(1, 2, figsize=(25, 8), sharey=True)
-#
-#thetao_glo_zm.plot(
-#    ax=axs[0],
-#    x="latitude",
-#    y="depth",
-#    vmin=vmin,
-#    vmax=vmax,
-#    cmap="coolwarm",
-#    cbar_kwargs={"label": units}
-#)
-#axs[0].set(
-#    title="Original field – zonal mean",
-#    xlabel="Latitude"
-#)
-#
-#thetao_res_zm.plot(
-#    ax=axs[1],
-#    x="lat",
-#    y="zt",
-#    vmin=vmin,
-#    vmax=vmax,
-#    cmap="coolwarm",
-#    cbar_kwargs={"label": units}
-#)
-#axs[1].set(
-#    title="Processed field – zonal mean",
-#    xlabel="Latitude",
-#    ylabel=""
-#)
-#axs[0].invert_yaxis()
-
-
-
-
-
-
-
-
-
-
-
-
-#vmin_glo = float(vo_glo.isel(time=time_index,depth=5).min())
-#vmax_glo = float(vo_glo.isel(time=time_index,depth=5).max())
-#vmin_res = float(vo_res.isel(time=time_index,zt=0).min())
-#vmax_res = float(vo_res.isel(time=time_index,zt=0).max())
-#vmin = min(vmin_glo,vmin_res)
-#vmax = max(vmax_glo,vmax_res)
-#units = vo_glo.units
-#levels = np.linspace(vmin, vmax, 100)
-#fig, axs = plt.subplots(
-#    1, 2,
-#    figsize=(25, 7),
-#    subplot_kw={'projection': ccrs.PlateCarree()}
-#)
-#
-#cf1 = axs[0].contourf(
-#    vo_glo.longitude, vo_glo.latitude,
-#    vo_glo.isel(time=time_index, depth=5),
-#    levels=levels,
-#    cmap='RdBu',
-#    extend='both',
-#    transform=ccrs.PlateCarree()
-#)
-#
-#axs[0].add_feature(cfeature.GSHHSFeature('low', levels=[1, 2, 6]))
-#axs[0].set_title('Original field at −6 m',fontsize=20)
-#
-#cf2 = axs[1].contourf(
-#    vo_res.lon, vo_res.lat_u,
-#    vo_res.isel(time=time_index, zt=0),
-#    levels=levels,
-#    cmap='RdBu',
-#    extend='both',
-#    transform=ccrs.PlateCarree()
-#)
-#
-#axs[1].add_feature(cfeature.GSHHSFeature('low', levels=[1, 2, 6]))
-#axs[1].set_title('Processed field at −6 m',fontsize=20)
-#
-#cbar = fig.colorbar(
-#    cf2,
-#    ax=axs,
-#    fraction=0.046,
-#    pad=0.04
-#)
-#cbar.set_label(units,size=15)
-#cbar.ax.tick_params(labelsize=10)
-
-#(var_to_filter - var_filtered).isel(time=time_index).plot(
-#    ax=axs[2],
-#    cmap="RdBu_r",
-#    cbar_kwargs={'label': units}
-#)
-#axs[2].set(title=f'Residual ',
-#           ylabel='')
 
