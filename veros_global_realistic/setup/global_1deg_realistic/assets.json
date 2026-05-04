@@ -4,12 +4,18 @@
     "md5": "1fc86f88acd820da078c8da5873cfa01"
   },
   "forcing_era5": {
-    "url": "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg_realistic/ERA5_1deg_1986_Flux_interp.nc"
+    "url": "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg_realistic/ERA5_1deg_1986_Flux_processed.nc"
   },
   "ic_glorys12": {
-    "url": "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg_realistic/Glorys_1993_01.nc"
+    "url": "https://osf.io/5at63/download/",
+    "filename": "glorys12_initial_conditions.nc"
   },
   "restoring_glorys12": {
-    "url": "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg_realistic/Glorys_restoring.nc"
+    "url": "https://osf.io/Hwbna/download/",
+    "filename": "glorys12_restoring.nc"
+  },
+  "mask": {
+    "url": "https://osf.io/Kh28w/download/",
+    "filename": "masks.nc"
   }
 }
