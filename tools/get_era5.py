@@ -1,7 +1,12 @@
 import cdsapi
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+ERA5_DIR = BASE_DIR / "data" / "ERA5"
+ERA5_DIR.mkdir(parents=True, exist_ok=True)
 
 dataset = "reanalysis-era5-single-levels"
-for year in range(2009,2025):
+for year in range(1993,1994):
     request = {
         "product_type": ["reanalysis"],
         "year": [str(year)],
@@ -49,7 +54,7 @@ for year in range(2009,2025):
         ],
         "grid": '1.0/1.0'
     }
-    target = "/Odyssey/private/e25cheve/data/ERA5_1deg_{}_Flux.grib".format(year)
+    target = ERA5_DIR / "ERA5_1deg_{}_Flux.grib".format(year)
     client = cdsapi.Client()
-    client.retrieve(dataset, request,target)
+    client.retrieve(dataset, request, str(target))
 

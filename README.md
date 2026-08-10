@@ -11,7 +11,7 @@ It includes:
 - GLORYS-based ocean initialization  
 - Pre/Post-processing tools  
 
-The plugin is designed to run realistic global ocean simulations by providing a simple workflow for data preprocessing and model configuration.
+The plugin is designed to run realistic global ocean simulations through a simple workflow for data preprocessing and model configuration. By default, it provides a one-degree global setup with 40 vertical levels. The grid and land/water masks used by this configuration are stored in `data/masks.nc`.
 
 ## Quick Usage
 
@@ -36,8 +36,7 @@ pip install -e ".[tools]"
 
 Prepare forcings from ERA5 reanalysis:
 
-- Download ERA5 forcings using get_era5.py for a certain range of years.
-A grib file by year.
+- Download ERA5 forcings from the CDS API using `tools/get_era5.py` for the desired range of years, default is 1993 only. See the [CDS API documentation](https://cds.climate.copernicus.eu/how-to-api) for authentication and setup details. One GRIB file per year is saved in `data/ERA5`.
 
 - Install grib_to_netcdf converter and convert ERA5 grib files using command:
 
@@ -45,22 +44,44 @@ A grib file by year.
 grib_to_netcdf -o file_name.nc file_name.grib
 ```
 
-- Run preprocessing.py with the following options:
+- Run `tools/preprocessing.py` with the following options:
 
 ```bash
-python preprocessing.py --single_level=True
+python .tools/preprocessing.py --dataset ERA5 
 ```
-Netcdf processed files are generated in veros/veros_assets/global_1deg_realistic/ directory. They include interpolated hourly ERA5 fields on the Veros simulation grid for the forcing variables required. 
+Netcdf processed files are generated in `veros/veros_assets/global_1deg_realistic/` directory. They include interpolated hourly ERA5 fields on the Veros simulation grid for the forcing variables required. 
 
 #### (b) GLORYS Initialization
 
 Prepare initial conditions from GLORYS reanalysis:
 
+- Download GLORYS12 monthly mean product from the Copernicus Marine Data Store using `tools/get_glorys12.py` for the chosen year and month, default is January 1993. See the [Copernicus Marine Toolbox API](https://help.marine.copernicus.eu/en/articles/8283072-copernicus-marine-toolbox-api-subset?pk_vid=ae1ac9aa63e0a5e91786376820793115) for authentication and setup details.
 
+- Run `tools/preprocessing.py` with the following options:
+
+```bash
+python ./tools/preprocessing.py --dataset GLORYS12
+```
+
+NetCDF processed files are generated in the `veros/veros_assets/global_1deg_realistic/` directory. They include filtered and coarse-grained fields on the Veros grid, with masking taken from `data/masks.nc`.
+
+Horizontal filtering uses [GCM-Filters](https://gcm-filters.readthedocs.io/), a diffusion-based spatial filtering package for gridded ocean, weather, and climate data described by [Loose et al. (2022)](https://doi.org/10.21105/joss.03947).
 
 ### 3. Run the Setup
 
-After installation, the setup becomes available to Veros:
+To run the setup:
+
+- Use the copy-setup command of Veros in the directory of your choice:
+
+```bash
+veros copy-setup global_1deg_realistic
+```
+
+- Finally:
+
+```bash
+veros run global_1deg_realistic.py
+```
 
 ## License
 

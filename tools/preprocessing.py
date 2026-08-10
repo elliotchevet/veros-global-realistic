@@ -1,26 +1,62 @@
+import argparse
 import numpy as np
-import netCDF4 as nc
 import matplotlib.pyplot as plt
 import xarray as xr
 import gcm_filters
 import os
-from netCDF4 import Dataset
 import xesmf as xe
-from datetime import datetime, timedelta
-from dateutil import tz
 import warnings
 from dask.diagnostics import ProgressBar
 from dask.distributed import Client
-from glob import glob
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
+PLUGIN_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(os.environ.get("VEROS_BASE_DIR", PLUGIN_DIR)).expanduser()
+DATA_DIR = BASE_DIR / "data"
+ERA5_DIR = Path(os.environ.get("ERA5_DIR", DATA_DIR / "ERA5")).expanduser()
+GLORYS12_DIR = Path(os.environ.get("GLORYS12_DIR", DATA_DIR / "GLORYS12")).expanduser()
+WEIGHTS_DIR = Path(os.environ.get("WEIGHTS_DIR", DATA_DIR / "weights")).expanduser()
+ASSETS_DIR = BASE_DIR / "veros" / "veros_assets" / "global_1deg_realistic"
+
+DATASET_CONFIG = {
+    "ERA5": {
+        "directory": ERA5_DIR,
+        "variables": ["str", ["ewss", "nsss"], "tp", "e", "ssr", "sshf", "slhf"],
+        "single_depth": True,
+        "filtering": False,
+        "weight_name": "era5",
+    },
+    "GLORYS12": {
+        "directory": GLORYS12_DIR,
+        "variables": ["mlotst", "zos", ["uo", "vo"], "thetao", "so"],
+        "single_depth": False,
+        "filtering": True,
+        "weight_name": "glorys12",
+    },
+}
+
 class Preprocessor:
-    def __init__(self, src_path, target_path,single_depth=False,use_mask=True,verbose=False,ncores=16,filtering=True,weight_path='/Odyssey/private/e25cheve/data/Weights',weight_name='glorys12'):
+    def __init__(
+        self,
+        src_path,
+        target_path,
+        single_depth=False,
+        use_mask=True,
+        verbose=False,
+        ncores=16,
+        filtering=True,
+        filter_scale_km=400,
+        weight_path=WEIGHTS_DIR,
+        weight_name="glorys12",
+    ):
         self.filtering = filtering
+        self.filter_scale_km = filter_scale_km
+        self.verbose = verbose
         self.weight_name = weight_name
         self.weight_path = Path(weight_path)
+        self.weight_path.mkdir(parents=True, exist_ok=True)
         self.use_mask = use_mask
         self.ds = xr.open_dataset(src_path, chunks={"time": 1})
         rename_dict = {}
@@ -41,8 +77,6 @@ class Preprocessor:
                 if verbose: print("Adjusting depth to negative values")
                 self.ds = self.ds.assign_coords(zt=(-self.ds.zt))
                 self.ds = self.ds.sortby("zt")
-            nlat = self.ds.dims["lat"]
-            nlon = self.ds.dims["lon"]
         if self.ds.dims["lat"] > 2000:
             self.ds = self.ds.isel(
                 lat=slice(0, -100),
@@ -97,12 +131,13 @@ class Preprocessor:
             mask_ocean_k = mask_ocean.isel(zt=k).astype("int8")
             if self.use_mask == False:
                 mask_ocean_k = None
-            hf = HorizontalFilter(grid,k,self.ds.time)
+            hf = HorizontalFilter(grid, k, self.ds.time, filter_scale_km=self.filter_scale_km)
             da_interp_go = da.isel(zt=k)
             var_i, var_filtered = hf.apply_filter(da_interp_go)
             regrid = HorizontalRegridder(
                     var_filtered, mask_ocean_k, self.target_grid.isel(zt=k),
-                    weights_path=self.weight_path/'weights_{}_{}.nc'.format(self.weight_name,k)
+                    weights_path=self.weight_path/'weights_{}_{}.nc'.format(self.weight_name,k),
+                    verbose=self.verbose,
                     )
             var_processed = regrid(var_filtered)
             da_processed.append(var_processed)
@@ -116,19 +151,25 @@ class Preprocessor:
         out = []
         da = self.ds[var]
         mask_ocean = np.isfinite(da.isel(time=0)).astype("int8")
-        if self.use_mask == False:
-            mask_ocean = None
         grid = LatLonGrid(
             self.ds.lat.values,
             self.ds.lon.values,
             mask=mask_ocean
         )
+        if self.use_mask == False:
+            mask_ocean = None
         if self.filtering:
-            hf = HorizontalFilter(grid,-1,self.ds.time)
+            hf = HorizontalFilter(grid, -1, self.ds.time, filter_scale_km=self.filter_scale_km)
             var_i, var_filtered = hf.apply_filter(da)
         else:
             var_filtered = da
-        regrid = HorizontalRegridder(var_filtered,mask_ocean, self.target_grid.isel(zt=-1),weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name))
+        regrid = HorizontalRegridder(
+            var_filtered,
+            mask_ocean,
+            self.target_grid.isel(zt=-1),
+            weights_path=self.weight_path/'weights_{}.nc'.format(self.weight_name),
+            verbose=self.verbose,
+        )
         final_var = regrid(var_filtered)
         final_var = final_var.fillna(0)
         out.append(final_var.to_dataset(name=var))
@@ -153,18 +194,20 @@ class Preprocessor:
             mask_ocean_k = mask_ocean.isel(zt=k).astype("int8")
             if self.use_mask == False:
                 mask_ocean_k = None
-            hf = HorizontalFilter(grid,k,self.ds.time)
+            hf = HorizontalFilter(grid, k, self.ds.time, filter_scale_km=self.filter_scale_km)
             da_u_go = da_u.isel(zt=k)
             da_v_go = da_v.isel(zt=k)
             u, u_filtered = hf.apply_filter(da_u_go)
             v, v_filtered = hf.apply_filter(da_v_go)
             regrid_u = HorizontalRegridder(
-                    u_filtered, mask_ocean, self.target_grid_u.isel(zt=k),
-                    weights_path=self.weight_path/'weights_u_{}_{}.nc'.format(self.weight_name,k)
+                    u_filtered, mask_ocean_k, self.target_grid_u.isel(zt=k),
+                    weights_path=self.weight_path/'weights_u_{}_{}.nc'.format(self.weight_name,k),
+                    verbose=self.verbose,
                     )
             regrid_v = HorizontalRegridder(
-                    v_filtered, mask_ocean, self.target_grid_v.isel(zt=k),
-                    weights_path=self.weight_path/'weights_v_{}_{}.nc'.format(self.weight_name,k)
+                    v_filtered, mask_ocean_k, self.target_grid_v.isel(zt=k),
+                    weights_path=self.weight_path/'weights_v_{}_{}.nc'.format(self.weight_name,k),
+                    verbose=self.verbose,
                     )
             var_u_processed = regrid_u(u_filtered)
             var_v_processed = regrid_v(v_filtered)
@@ -189,17 +232,17 @@ class Preprocessor:
         da_v = self.ds[var[1]]
 
         mask_ocean = np.isfinite(da_u.isel(time=0)).astype("int8")
-        if self.use_mask == False:
-            mask_ocean = None
 
         grid = LatLonGrid(
             self.ds.lat.values,
             self.ds.lon.values,
             mask=mask_ocean
         )
+        if self.use_mask == False:
+            mask_ocean = None
 
         if self.filtering:
-            hf = HorizontalFilter(grid, -1, self.ds.time)
+            hf = HorizontalFilter(grid, -1, self.ds.time, filter_scale_km=self.filter_scale_km)
 
             u, u_filtered = hf.apply_filter(da_u)
             v, v_filtered = hf.apply_filter(da_v)
@@ -211,14 +254,16 @@ class Preprocessor:
             u_filtered,
             mask_ocean,
             self.target_grid_u.isel(zt=-1),
-            weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name)
+            weights_path=self.weight_path/'weights_u_{}.nc'.format(self.weight_name),
+            verbose=self.verbose,
         )
 
         regrid_v = HorizontalRegridder(
             v_filtered,
             mask_ocean,
             self.target_grid_v.isel(zt=-1),
-            weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name)
+            weights_path=self.weight_path/'weights_v_{}.nc'.format(self.weight_name),
+            verbose=self.verbose,
         )
 
         final_u = regrid_u(u_filtered)
@@ -490,8 +535,9 @@ class HorizontalFilter:
         (u_var_filtered, v_var_filtered) = self.filter.apply_to_vector(u_var,v_var, dims=["lat", "lon"])
         return u_var_filtered, v_var_filtered
 
-    def plot_filtered_field(self, var_to_filter, var_filtered, var_name, time_index=0,
-                            output_dir="/Odyssey/private/e25cheve/transfert/"):
+    def plot_filtered_field(self, var_to_filter, var_filtered, var_name, time_index=0, output_dir=ASSETS_DIR):
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         vmin = float(var_to_filter.isel(time=time_index).min())
         vmax = float(var_to_filter.isel(time=time_index).max())
@@ -515,16 +561,8 @@ class HorizontalFilter:
         axs[1].set(title=f'filtered field',
                    ylabel='')
 
-        #(var_to_filter - var_filtered).isel(time=time_index).plot(
-        #    ax=axs[2],
-        #    cmap="RdBu_r",
-        #    cbar_kwargs={'label': units}
-        #)
-        #axs[2].set(title=f'Residual ',
-        #           ylabel='')
-
         plt.tight_layout()
-        plt.savefig(output_dir+'filtered_{}.png'.format(var_name),format='png',dpi=300)
+        plt.savefig(output_dir / "filtered_{}.png".format(var_name),format='png',dpi=300)
         plt.close()
 
 
@@ -574,27 +612,80 @@ class HorizontalRegridder:
         out = out.roll(lon=-shift, roll_coords=False)
         return out
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Preprocess ERA5 or GLORYS12 data for the global realistic setup.")
+    parser.add_argument("--dataset", choices=DATASET_CONFIG, required=True, help="Dataset to preprocess.")
+    parser.add_argument("--data-dir", type=Path, help="Directory containing input files. Defaults to data/<dataset>.")
+    parser.add_argument("--output-dir", type=Path, default=ASSETS_DIR, help="Directory for processed output files.")
+    parser.add_argument("--grid-file", type=Path, default=DATA_DIR / "masks.nc", help="Target Veros grid/mask file.")
+    parser.add_argument("--weights-dir", type=Path, default=WEIGHTS_DIR, help="Directory for xESMF weight files.")
+    parser.add_argument("--weight-name", help="Weight filename stem. Defaults to a dataset-specific name.")
+    parser.add_argument("--filter-scale-km", type=float, default=400, help="Horizontal filter scale in km.")
+    parser.add_argument("--filtering", action=argparse.BooleanOptionalAction, default=None, help="Enable or disable filtering.")
+    parser.add_argument("--single-depth", action=argparse.BooleanOptionalAction, default=None, help="Treat source zt as singleton.")
+    parser.add_argument("--ncores", type=int, default=16, help="Number of Dask workers and chunking target.")
+    parser.add_argument("--verbose", action="store_true", help="Print detailed preprocessing progress.")
+    return parser.parse_args()
+
+
+def input_files(data_dir):
+    files = sorted(path for path in data_dir.iterdir() if path.is_file() and not path.name.startswith("."))
+    if not files:
+        raise FileNotFoundError(f"No input files found in {data_dir}")
+    return files
+
+
+def output_filename(input_path):
+    if input_path.name.endswith(".nc"):
+        return input_path.name.replace(".nc", "_processed.nc")
+    return f"{input_path.stem}_processed.nc"
+
+
 def main():
-    client = Client(n_workers=16, threads_per_worker=1)
-    variables = ['thetao','so',['uo','vo'],'zos']
-    glorys_pattern = "/Odyssey/private/e25cheve/data/Glorys_Climatology/mercatorglorys12v1_gl12_mean_199301.nc"
-    grid_file = "/Odyssey/private/e25cheve/veros/veros_assets/global_1deg/masks_raw.nc"
-    files = sorted(glob(glorys_pattern))
-    for f in files:
-        print(f"Processing {f}")
-        Glo = Preprocessor(
-            f,
+    args = parse_args()
+    config = DATASET_CONFIG[args.dataset]
+
+    data_dir = (args.data_dir or config["directory"]).expanduser()
+    output_dir = args.output_dir.expanduser()
+    weights_dir = args.weights_dir.expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    grid_file = args.grid_file.expanduser()
+    filtering = config["filtering"] if args.filtering is None else args.filtering
+    single_depth = config["single_depth"] if args.single_depth is None else args.single_depth
+    weight_name = args.weight_name or config["weight_name"]
+
+    if args.verbose:
+        print(f"Dataset: {args.dataset}")
+        print(f"Input directory: {data_dir}")
+        print(f"Output directory: {output_dir}")
+        print(f"Weights directory: {weights_dir}")
+        print(f"Grid file: {grid_file}")
+        print(f"Filtering: {filtering}")
+        print(f"Filter scale: {args.filter_scale_km} km")
+        print(f"Single depth: {single_depth}")
+        print(f"Weight name: {weight_name}")
+
+    client = Client(n_workers=args.ncores, threads_per_worker=1)
+    if args.verbose:
+        print(client)
+
+    for src_file in input_files(data_dir):
+        print(f"Processing {src_file}")
+        preprocessor = Preprocessor(
+            src_file,
             grid_file,
-            single_depth=False,
-            verbose=True,
-            weight_name='glorys12_raw'
+            single_depth=single_depth,
+            use_mask=True,
+            filtering=filtering,
+            filter_scale_km=args.filter_scale_km,
+            verbose=args.verbose,
+            ncores=args.ncores,
+            weight_path=weights_dir,
+            weight_name=weight_name,
         )
-        output_name = os.path.basename(f).replace(".nc", "_raw_processed.nc")
-        Glo.write(
-            variables,
-            "/Odyssey/private/e25cheve/data/Glorys_Climatology/",
-            output_name
-        )
+        preprocessor.write(config["variables"], output_dir, output_filename(src_file))
 
 if __name__ == "__main__":
     main()
