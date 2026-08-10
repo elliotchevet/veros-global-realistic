@@ -7,11 +7,11 @@
 It includes:
 
 - A global realistic model setup  
-- Hourly ERA5 atmospheric forcings  
+- Wrappers for hourly ERA5 atmospheric forcings  
 - GLORYS-based ocean initialization  
-- Preprocessing tools to prepare forcing and initialization datasets  
+- Pre/Post-processing tools  
 
-The plugin is designed to simplify realistic ocean simulations by providing a consistent workflow for data preparation and model configuration.
+The plugin is designed to run realistic global ocean simulations by providing a simple workflow for data preprocessing and model configuration.
 
 ## Quick Usage
 
@@ -24,26 +24,39 @@ git clone https://github.com/elliotchevet/veros_global_realistic.git
 cd veros_global_realistic
 pip install -e .
 ```
+To use pre/post-processing tools, extra libraries are required. Install plugin with the following:
 
-Editable installation (`-e`) is recommended so that modifications to the setup or preprocessing tools are immediately available.
+```bash
+pip install -e ".[tools]"
+```
 
 ### 2. Prepare Forcing and Initialization Data
-
-The plugin provides preprocessing utilities to:
-
-- filter raw datasets  
-- interpolate data onto the Veros grid  
-- generate files directly usable by the setup  
-
-Typical workflow:
 
 #### (a) ERA5 Forcings
 
 Prepare forcings from ERA5 reanalysis:
 
+- Download ERA5 forcings using get_era5.py for a certain range of years.
+A grib file by year.
+
+- Install grib_to_netcdf converter and convert ERA5 grib files using command:
+
+```bash
+grib_to_netcdf -o file_name.nc file_name.grib
+```
+
+- Run preprocessing.py with the following options:
+
+```bash
+python preprocessing.py --single_level=True
+```
+Netcdf processed files are generated in veros/veros_assets/global_1deg_realistic/ directory. They include interpolated hourly ERA5 fields on the Veros simulation grid for the forcing variables required. 
+
 #### (b) GLORYS Initialization
 
 Prepare initial conditions from GLORYS reanalysis:
+
+
 
 ### 3. Run the Setup
 

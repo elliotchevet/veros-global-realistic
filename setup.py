@@ -23,7 +23,20 @@ Operating System :: MacOS
 
 INSTALL_REQUIRES = [
     "veros>=1.6"
+    "xarray",
+    "h5netcdf",
+    "dask",
 ]
+
+EXTRAS_REQUIRE = {
+    "tools": [
+        "gcm_filters",
+        "xesmf",
+        "netCDF4",
+        "matplotlib",
+        "dask[distributed]",
+    ],
+}
 
 with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
