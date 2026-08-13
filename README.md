@@ -36,7 +36,7 @@ pip install -e ".[tools]"
 
 Prepare forcings from ERA5 reanalysis:
 
-- Download ERA5 forcings from the CDS API using `tools/get_era5.py` for the desired range of years, default is 1993 only. See the [CDS API documentation](https://cds.climate.copernicus.eu/how-to-api) for authentication and setup details. One GRIB file per year is saved in `data/ERA5`.
+- Download ERA5 forcings from the CDS API using `tools/get_era5.py` for the desired range of years, default is 1993 only. See the [CDS API documentation](https://cds.climate.copernicus.eu/how-to-api) for authentication and setup Api key details. One GRIB file per year is saved in `data/ERA5`.
 
 - Install grib_to_netcdf converter and convert ERA5 grib files using command:
 
@@ -55,7 +55,7 @@ Netcdf processed files are generated in `veros/veros_assets/global_1deg_realisti
 
 Prepare initial conditions from GLORYS reanalysis:
 
-- Download GLORYS12 monthly mean product from the Copernicus Marine Data Store using `tools/get_glorys12.py` for the chosen year and month, default is January 1993. See the [Copernicus Marine Toolbox API](https://help.marine.copernicus.eu/en/articles/8283072-copernicus-marine-toolbox-api-subset?pk_vid=ae1ac9aa63e0a5e91786376820793115) for authentication and setup details.
+- Download GLORYS12 monthly mean product from the Copernicus Marine Data Store using `tools/get_glorys12.py` for the chosen year and month, default is January 1993. See the [Copernicus Marine Toolbox API](https://help.marine.copernicus.eu/en/articles/8283072-copernicus-marine-toolbox-api-subset?pk_vid=ae1ac9aa63e0a5e91786376820793115) for authentication and setup Api key details.
 
 - Run `tools/preprocessing.py` with the following options:
 

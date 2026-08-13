@@ -2,7 +2,6 @@
 # coding=utf-8
 
 from setuptools import setup, find_packages
-from codecs import open
 import sys
 import os
 
@@ -13,7 +12,6 @@ sys.path.append(here)
 CLASSIFIERS = """
 Development Status :: 1 - Beta
 Intended Audience :: Science/Research
-License :: OSI Approved :: IMT-Atlantique License
 Programming Language :: Python :: 3.12.12
 Topic :: Scientific/Engineering
 Operating System :: POSIX
@@ -22,7 +20,7 @@ Operating System :: MacOS
 """
 
 INSTALL_REQUIRES = [
-    "veros>=1.6"
+    "veros[jax]>=1.6.2",
     "xarray",
     "h5netcdf",
     "dask",
@@ -35,6 +33,7 @@ EXTRAS_REQUIRE = {
         "netCDF4",
         "matplotlib",
         "dask[distributed]",
+        "cdsapi>=0.7.7",
     ],
 }
 
