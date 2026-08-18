@@ -34,6 +34,7 @@ EXTRAS_REQUIRE = {
         "matplotlib",
         "dask[distributed]",
         "cdsapi>=0.7.7",
+        "copernicusmarine",
     ],
 }
 
@@ -55,6 +56,7 @@ setup(
     packages=find_packages(),
     version="0.1.0",
     install_requires=INSTALL_REQUIRES,
+    extras_require=EXTRAS_REQUIRE,
     entry_points={
         "veros.setup_dirs": [
             "global_realistic = veros_global_realistic.setup"

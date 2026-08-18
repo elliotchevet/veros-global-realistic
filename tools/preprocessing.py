@@ -9,16 +9,24 @@ import warnings
 from dask.diagnostics import ProgressBar
 from dask.distributed import Client
 from pathlib import Path
+from veros_global_realistic.paths import find_veros_assets_dir
 
 warnings.filterwarnings("ignore")
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
-BASE_DIR = Path(os.environ.get("VEROS_BASE_DIR", PLUGIN_DIR)).expanduser()
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get("VEROS_GLOBAL_REALISTIC_DATA_DIR", PLUGIN_DIR / "data")).expanduser()
 ERA5_DIR = Path(os.environ.get("ERA5_DIR", DATA_DIR / "ERA5")).expanduser()
 GLORYS12_DIR = Path(os.environ.get("GLORYS12_DIR", DATA_DIR / "GLORYS12")).expanduser()
+GLORYS12_IC_DIR = GLORYS12_DIR / "Initial_States"
+GLORYS12_RESTORING_DIR = GLORYS12_DIR / "Restoring"
 WEIGHTS_DIR = Path(os.environ.get("WEIGHTS_DIR", DATA_DIR / "weights")).expanduser()
-ASSETS_DIR = BASE_DIR / "veros" / "veros_assets" / "global_1deg_realistic"
+VEROS_ASSETS_DIR = find_veros_assets_dir()
+ASSETS_DIR = VEROS_ASSETS_DIR / "global_1deg_realistic"
+
+GLORYS12_OPTIONS = {
+    "filtering": True,
+    "weight_name": "glorys12",
+}
 
 DATASET_CONFIG = {
     "ERA5": {
@@ -28,12 +36,17 @@ DATASET_CONFIG = {
         "filtering": False,
         "weight_name": "era5",
     },
-    "GLORYS12": {
-        "directory": GLORYS12_DIR,
-        "variables": ["mlotst", "zos", ["uo", "vo"], "thetao", "so"],
+    "GLORYS12_IC": {
         "single_depth": False,
-        "filtering": True,
-        "weight_name": "glorys12",
+        "directory": GLORYS12_IC_DIR,
+        "variables": ["mlotst", "zos", ["uo", "vo"], "thetao", "so"],
+        **GLORYS12_OPTIONS,
+    },
+    "GLORYS12_Restoring": {
+        "single_depth": True,
+        "directory": GLORYS12_RESTORING_DIR,
+        "variables": ["mlotst", "zos", "thetao", "so"],
+        **GLORYS12_OPTIONS,
     },
 }
 
@@ -104,10 +117,10 @@ class Preprocessor:
         if nt is not None and nt > 1:
             if nt >= ncores:
                 self.chunker["time"] = int(np.ceil(nt / ncores))
-        
+
             else:
                 self.chunker["time"] = 1
-        
+
                 if nz is not None and nz > 1:
                     depth_chunks = max(1, ncores // nt)
                     self.chunker["zt"] = int(np.ceil(nz / depth_chunks))
@@ -174,8 +187,8 @@ class Preprocessor:
         final_var = final_var.fillna(0)
         out.append(final_var.to_dataset(name=var))
         return xr.merge(out)
-    
-        
+
+
     def run_vector(self, var):
         da_u = self.ds[var[0]]
         da_v = self.ds[var[1]]
@@ -213,7 +226,7 @@ class Preprocessor:
             var_v_processed = regrid_v(v_filtered)
             da_u_processed.append(var_u_processed)
             da_v_processed.append(var_v_processed)
-        
+
         u_processed = xr.concat(da_u_processed, dim="zt")
         v_processed = xr.concat(da_v_processed, dim="zt")
         u_processed = u_processed.assign_coords(zt=self.z_target)
@@ -285,8 +298,8 @@ class Preprocessor:
     def write(self, variables, output_dir, filename="output.nc"):
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, filename)
-         
-        for var in variables: 
+
+        for var in variables:
             if not os.path.exists(output_path):
                 if isinstance(var,list):
                     data_var = self.ds[var[0]]
@@ -320,7 +333,7 @@ class Preprocessor:
                         ds_new.to_netcdf(output_path, mode="w",compute=True)
                     print(f"Created file and wrote variable '{var}'")
                 continue
-    
+
             with xr.open_dataset(output_path) as ds_out:
                 if isinstance(var,list):
                     if var[0] and var[1] in ds_out.data_vars:
@@ -363,7 +376,7 @@ class Preprocessor:
                 with ProgressBar():
                     ds_new.to_netcdf(output_path, mode="a",compute=True)
                 print(f"Appended variable '{var}' to existing file")
-    
+
         return output_path
 
 
@@ -494,7 +507,7 @@ class HorizontalFilter:
         kappa_w = self._hc(xr.ones_like(dxw))
         kappa_s = self._hc(xr.ones_like(dyw))
 
-        
+
         self.filter = gcm_filters.Filter(
             filter_scale=self.filter_scale,
             dx_min=self.dx_min,
@@ -615,7 +628,7 @@ class HorizontalRegridder:
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess ERA5 or GLORYS12 data for the global realistic setup.")
     parser.add_argument("--dataset", choices=DATASET_CONFIG, required=True, help="Dataset to preprocess.")
-    parser.add_argument("--data-dir", type=Path, help="Directory containing input files. Defaults to data/<dataset>.")
+    parser.add_argument("--data-dir", type=Path, help="Directory containing input files. Defaults to the dataset directory.")
     parser.add_argument("--output-dir", type=Path, default=ASSETS_DIR, help="Directory for processed output files.")
     parser.add_argument("--grid-file", type=Path, default=DATA_DIR / "masks.nc", help="Target Veros grid/mask file.")
     parser.add_argument("--weights-dir", type=Path, default=WEIGHTS_DIR, help="Directory for xESMF weight files.")
@@ -636,6 +649,8 @@ def input_files(data_dir):
 
 
 def output_filename(input_path):
+    if input_path.name.endswith("_processed.nc"):
+        return input_path.name
     if input_path.name.endswith(".nc"):
         return input_path.name.replace(".nc", "_processed.nc")
     return f"{input_path.stem}_processed.nc"

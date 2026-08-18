@@ -7,9 +7,12 @@ from veros import VerosSetup, tools, time, veros_routine, veros_kernel, KernelOu
 from veros.variables import Variable, allocate
 from veros.core.operators import numpy as npx, update, at
 from veros_global_realistic import forcing
+from veros_global_realistic.paths import expanded_asset_manifest
+
 
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
-DATA_FILES = tools.get_assets("global_1deg_realistic", os.path.join(BASE_PATH, "assets.json"))
+ASSET_MANIFEST = expanded_asset_manifest(os.path.join(BASE_PATH, "assets.json"))
+DATA_FILES = tools.get_assets("global_1deg_realistic", ASSET_MANIFEST)
 ERA5_VARIABLES = ("ewss", "nsss", "str", "slhf", "sshf", "ssr", "e", "tp")
 
 
