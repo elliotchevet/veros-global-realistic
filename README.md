@@ -54,7 +54,7 @@ grib_to_netcdf -o file_name.nc file_name.grib
 python .tools/preprocessing.py --dataset ERA5 
 ```
 Netcdf processed files are generated in `veros/veros_assets/global_1deg_realistic/` directory. They include interpolated hourly ERA5 fields on the Veros simulation grid for the forcing variables required. 
-### (b) GLORYS12 Initialization
+#### (b) GLORYS12 Initialization
 
 Prepare initial conditions from GLORYS12 reanalysis:
 
@@ -74,7 +74,7 @@ NetCDF processed files are generated in the `veros/veros_assets/global_1deg_real
 
 Horizontal filtering uses [GCM-Filters](https://gcm-filters.readthedocs.io/), a diffusion-based spatial filtering package for gridded ocean, weather, and climate data described by [Loose et al. (2022)](https://doi.org/10.21105/joss.03947).
 
-#### (c) GLORYS Restoring
+#### (c) GLORYS12 Restoring
 
 Prepare monthly surface restoring data from the GLORYS12 climatology:
 
